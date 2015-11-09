@@ -32,6 +32,10 @@ href="http://www.r-project.org/">www.r-project.org</a>.
 The R bindings are under active development.  They have been used to
 compile and run an R interface to QuantLib running on Mandriva Linux
 with gcc. The R bindings also work on Microsoft Windows using Visual C++.
+
+They have also been used to generate a binding to the SimpleITK, which
+is a large and complex C++ library.
+
 </p>
 
 <H2><a name="R_nn2">37.1 Bugs</a></H2>
@@ -42,7 +46,7 @@ Currently the following features are not implemented or broken:
 </p>
 
 <ul>
-<li>Garbage collection of created objects
+<li>Garbage collection of create objects (Is this true?)
 <li>C Array wrappings
 </ul>
 
@@ -183,6 +187,15 @@ as an SEXP with an external pointer type. The class is the mangled
 name of the class. The nice thing about R is that is allows you to
 keep track of the pointer object which removes the necessity for a lot
 of the proxy class baggage you see in other languages.
+
+Some features to note: 
+
+<ul>
+<li> Garbage collection is via the R finalization mechanism - class
+destructors get called when objects are garbage collected in R.
+<li> C++ vectors and lists are automatically converted to R vectors.
+</ul> 
+
 </p>
 
 <H2><a name="R_nn7">37.7 Enumerations</a></H2>
@@ -191,7 +204,80 @@ of the proxy class baggage you see in other languages.
 <p>
 enumerations are characters which are then converted back and forth to
 ints before calling the C routines. All of the enumeration code is
-done in R.
+done in R. Anonymous enumerations are not wrapped. Enumerations are
+represented using hidden variables and integer values are initialised
+using a call to a C wrapper function.
+
+Initialisation of enumerations has implications for code included in
+an R package - calls to the functions definining the enumeration
+structures need to be made after the shared library is loaded -
+usually the <i>.onLoad</i> function.
+
+For large projects this is best done using R scripts that filter out
+calls to <i> defineEnumeration</i> and put them in <i>.onLoad</i>. 
+
+<pre>
+## This function uses the R language parsing capabilities.
+## We're looking for calls to defineEnumeration...
+## splitSwigFile("swig_generated_code.R", "zonload.R", "stuff_not_in_onload.R")
+##
+splitSwigFile <- function(filename, onloadfile, mainfile)
+{
+  p1 <- parse(file=filename)
+
+  getdefineEnum <- function(X)
+  {
+    return (is.call(X) & (X[[1]]=="defineEnumeration"))
+  }
+
+  getFuncAttr <- function(X)
+  {
+  if (is.call(X) & X[[1]] == '=') {
+        lhs <- X[[2]]
+        if (length(lhs) < 2) return(FALSE)
+        if ( (lhs[[1]]=='attr')) {
+           return ((lhs[[3]] == 'inputTypes') | (lhs[[3]] == 'returnType'))
+        }
+    }
+  return(FALSE)
+  }
+  dd <- sapply(p1, getdefineEnum)
+
+  enums <- p1[dd]
+  enums <- unlist(lapply(enums, deparse))
+
+  ## put the function def around this
+  enums <- c(".onLoad <- function(libname, pkgname) {", enums, "\n}")
+
+  everythingelse <- p1[!dd]
+
+  attrstuff <- sapply(everythingelse, getFuncAttr)
+  everythingelse <- everythingelse[!attrstuff]
+
+  everythingelse <- unlist(lapply(everythingelse, deparse))
+  writeLines(everythingelse, mainfile)
+  writeLines(enums, onloadfile)
+
+}
+
+</pre>
+
+It is also useful to modify <i>enumToInteger</i>
+and <i>enumFromInteger</i> so that they explicitly search the package
+environment, for example, the <i>pos</i> argument below;
+
+
+<pre>
+enumToInteger <- function(name, type) {
+    if (is.character(name)) {
+        ans <- as.integer(get(paste(".__E__", type, sep = ""), pos='package:SimpleITK')[name])
+        if (is.na(ans)) {
+            warning("enum not found ", name, " ", type)
+        }
+        ans
+    }
+}
+</pre>
 </p>
 
 </body>
